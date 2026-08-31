@@ -1,0 +1,8 @@
+---
+# Branch-override file required by nautobot-ssot's Bootstrap integration.
+# The loader does `globals()[branch_name]` after loading every .yml file in
+# this repo -- so a file literally named after PLUGINS_CONFIG's
+# "bootstrap_nautobot_environment_branch" ("main") must exist, and it must
+# parse to a dict (not None), since the code later calls .get() on it.
+# No branch-specific overrides are needed, so this is intentionally empty.
+{}
