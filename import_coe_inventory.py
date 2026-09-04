@@ -22,6 +22,7 @@ SECURITY NOTE:
   yourself, keyed by device name.
 """
 from django.contrib.contenttypes.models import ContentType
+import ipaddress
 from nautobot.apps.jobs import Job, FileVar, BooleanVar, ObjectVar, register_jobs
 from nautobot.dcim.models import (
     Device,
@@ -33,7 +34,7 @@ from nautobot.dcim.models import (
     Platform,
 )
 from nautobot.extras.models import Role, Status
-from nautobot.ipam.models import IPAddress, Namespace
+from nautobot.ipam.models import IPAddress, Namespace, Prefix
 
 from .coe_inventory_parser import parse_workbook
 
@@ -92,6 +93,7 @@ class ImportCOENetworkInventory(Job):
         platform_cache = {}
         devicetype_cache = {}
         role_cache = {}
+        prefix_cache = {}
 
         created, skipped, errors = 0, 0, 0
 
@@ -161,16 +163,34 @@ class ImportCOENetworkInventory(Job):
 
                 namespace = Namespace.objects.get_or_create(name="Global")[0]
                 for ip, prefix in dev["ip_addresses"]:
+                    net = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+                    cache_key = str(net)
+                    prefix_obj = prefix_cache.get(cache_key)
+                    if prefix_obj is None:
+                        prefix_obj = Prefix.objects.filter(
+                            network=str(net.network_address),
+                            prefix_length=net.prefixlen,
+                            namespace=namespace,
+                        ).first()
+                        if not prefix_obj:
+                            prefix_obj = Prefix.objects.create(
+                                prefix=str(net),
+                                namespace=namespace,
+                                status=active_status,
+                            )
+                            self.logger.info(f"Created parent Prefix '{net}' in namespace Global.")
+                        prefix_cache[cache_key] = prefix_obj
+
                     addr = f"{ip}/{prefix}"
-                    ip_obj, ip_created = IPAddress.objects.get_or_create(
-                        host=ip,
-                        parent__namespace=namespace,
-                        defaults={
-                            "address": addr,
-                            "status": active_status,
-                            "namespace": namespace,
-                        },
-                    )
+                    ip_obj = IPAddress.objects.filter(host=ip, parent__namespace=namespace).first()
+                    ip_created = False
+                    if not ip_obj:
+                        ip_obj = IPAddress.objects.create(
+                            address=addr,
+                            namespace=namespace,
+                            status=active_status,
+                        )
+                        ip_created = True
                     if not ip_created:
                         self.logger.warning(
                             f"IP {ip} already exists in Nautobot -- reusing/assigning to "
